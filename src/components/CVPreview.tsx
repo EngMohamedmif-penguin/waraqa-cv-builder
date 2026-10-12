@@ -2,9 +2,10 @@
  * معاينة السيرة: تحول CVData إلى كتل مرتبة داخل صفحات A4، وتطبق القالب
  * ولوحة اللون وتحدد عدد الصفحات بقياس DOM. التصدير يلتقط هذه الصفحات فقط.
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { CVColorId, CVData, CVSectionId, TemplateId } from '../types';
 import { getTemplatePalette, localizeAdditionalKind, localizeProficiency } from '../data';
+import { getPersonalLinks, linkText, safeEmailHref, safeExternalUrl } from '../links';
 
 type Lang = 'en' | 'ar';
 type Props = { data: CVData; template: TemplateId; lang: Lang; colorTheme: CVColorId; onPageCountChange?: (count: number) => void };
@@ -32,7 +33,9 @@ export default function CVPreview({ data, template, lang, colorTheme, onPageCoun
   const sectionOrder: CVSectionId[] = data.sectionOrder?.length ? data.sectionOrder : ['summary','experience','education','skills','projects','certifications','languages','additional'];
   const hiddenSections = new Set(data.hiddenSections || []);
   const sectionStyle = (id: CVSectionId): CSSProperties => ({ display: hiddenSections.has(id) ? 'none' : undefined });
-  const contactItems = [personal.email, personal.phone, personal.location, personal.linkedin, personal.portfolio, personal.github].filter((value) => value.trim());
+  const socialLinks = getPersonalLinks(personal);
+  const contactItems: Array<{ text: string; href?: string }> = [personal.email, personal.phone, personal.location].filter((value) => value.trim()).map((text) => ({ text, href: text === personal.email ? safeEmailHref(text) || undefined : undefined }));
+  socialLinks.forEach((link) => contactItems.push({ text: linkText(link.url, link.displayName, link.key === 'portfolio' ? tx(lang, 'Personal website', 'الموقع الشخصي') : link.label), href: safeExternalUrl(link.url) || undefined }));
   const hasContent = Boolean(personal.fullName || personal.title || contactItems.length || data.summary || data.experiences.length || data.education.length || data.technicalSkills.length || data.softSkills.length || data.projects.length || data.certifications.length || data.languages.length || data.additional.length);
 
   const blocks = useMemo<Block[]>(() => {
@@ -41,7 +44,7 @@ export default function CVPreview({ data, template, lang, colorTheme, onPageCoun
     if (personal.fullName || personal.title || contactItems.length) add('header', <header className="cv-header">
       <div className="cv-name-block">{personal.fullName && <h1>{personal.fullName}</h1>}{personal.title && <p className="cv-professional-title">{personal.title}</p>}</div>
       {template === 'photo' && personal.photo && <img className="cv-photo" src={personal.photo} alt={tx(lang, 'Profile photo', 'الصورة الشخصية')} />}
-      {contactItems.length > 0 && <div className="cv-contact">{contactItems.map((item, index) => <span className="cv-contact-item" key={`${item}-${index}`}>{item}</span>)}</div>}
+      {contactItems.length > 0 && <div className="cv-contact">{contactItems.map((item, index) => <span className="cv-contact-item" key={`${item.text}-${index}`}>{item.href ? <a href={item.href} target={item.href.startsWith('mailto:') ? undefined : '_blank'} rel={item.href.startsWith('mailto:') ? undefined : 'noopener noreferrer'}>{item.text}</a> : item.text}</span>)}</div>}
     </header>);
 
     const ordered = (id: CVSectionId) => sectionOrder.indexOf(id);
@@ -62,7 +65,7 @@ export default function CVPreview({ data, template, lang, colorTheme, onPageCoun
         {data.technicalSkills.length > 0 && <div className="cv-skill-group"><h3>{tx(lang, 'Technical skills', 'المهارات التقنية')}</h3><div className="cv-skill-list">{data.technicalSkills.map((skill) => <span className="cv-skill-tag" key={`technical-${skill}`}>{skill}</span>)}</div></div>}
         {data.softSkills.length > 0 && <div className="cv-skill-group"><h3>{tx(lang, 'Professional skills', 'المهارات المهنية')}</h3><div className="cv-skill-list">{data.softSkills.map((skill) => <span className="cv-skill-tag" key={`professional-${skill}`}>{skill}</span>)}</div></div>}
       </div> : null, title: tx(lang, 'Skills', 'المهارات') },
-      { id: 'projects' as CVSectionId, content: data.projects.map((item) => <div className="cv-entry" key={item.id}><div className="cv-entry-head"><div className="cv-entry-main">{item.name && <h3>{item.name}</h3>}</div></div>{item.technologies && <p className="cv-technologies">{item.technologies}</p>}{item.description.trim() && <p>{item.description}</p>}{(item.link || item.github) && <p className="cv-link-line">{[item.link, item.github].filter(Boolean).join(' · ')}</p>}</div>), title: tx(lang, 'Projects', 'المشروعات') },
+      { id: 'projects' as CVSectionId, content: data.projects.map((item) => <div className="cv-entry" key={item.id}><div className="cv-entry-head"><div className="cv-entry-main">{item.name && <h3>{item.name}</h3>}</div></div>{item.technologies && <p className="cv-technologies">{item.technologies}</p>}{item.description.trim() && <p>{item.description}</p>}{(item.link || item.github) && <p className="cv-link-line">{([['link', item.link, item.linkDisplayName, tx(lang, 'Project link', 'رابط المشروع')], ['github', item.github, item.githubDisplayName, 'GitHub']] as const).filter(([, url]) => Boolean(url)).map(([key, url, displayName, fallback], linkIndex) => { const href = safeExternalUrl(url); const label = linkText(url, displayName || '', fallback); return <Fragment key={`${key}-${url}`}>{linkIndex > 0 && ' · '}{href ? <a href={href} target="_blank" rel="noopener noreferrer">{label}</a> : label}</Fragment>; })}</p>}</div>), title: tx(lang, 'Projects', 'المشروعات') },
       { id: 'certifications' as CVSectionId, content: data.certifications.map((item) => <div className="cv-entry cv-inline-entry" key={item.id}>{item.name && <h3>{item.name}</h3>}{(item.organization || item.date || item.credential) && <p className="cv-org">{[item.organization, item.date, item.credential].filter(Boolean).join(' · ')}</p>}</div>), title: tx(lang, 'Certifications', 'الشهادات') },
       { id: 'languages' as CVSectionId, content: data.languages.length ? <div className="cv-language-row">{data.languages.map((item) => <span key={item.id}><b>{item.language}</b>{item.level && <em>{localizeProficiency(item.level, lang)}</em>}</span>)}</div> : null, title: tx(lang, 'Languages', 'اللغات') },
     ];

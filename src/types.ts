@@ -14,6 +14,9 @@ export type PersonalInfo = {
   linkedin: string;
   github: string;
   portfolio: string;
+  linkedinDisplayName?: string;
+  githubDisplayName?: string;
+  portfolioDisplayName?: string;
   photo?: string;
 };
 
@@ -46,6 +49,8 @@ export type Project = {
   technologies: string;
   link: string;
   github: string;
+  linkDisplayName?: string;
+  githubDisplayName?: string;
 };
 
 export type Certification = {

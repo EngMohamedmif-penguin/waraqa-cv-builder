@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import type { AdditionalSection, CVData, CVSectionId, EditorSection, Education, Experience, Project, Certification, Language, PersonalInfo } from '../types';
 import { additionalKinds, uid } from '../data';
 import { characterState, COLLECTION_LIMITS, TEXT_LIMITS, type TextLimit } from '../validation';
+import { safeExternalUrl, type LinkKey } from '../links';
 
 type Lang = 'en' | 'ar';
 const tx = (lang: Lang, en: string, ar: string) => lang === 'ar' ? ar : en;
@@ -68,9 +69,11 @@ function IconButton({ children, onClick, label, danger = false, disabled = false
 }
 
 function SectionFrame({ title, hint, children, id }: { title: string; hint?: string; children: React.ReactNode; id: EditorSection }) {
-  return <section className="editor-section" id={`editor-${id}`}>
-    <div className="section-title-row"><div><h2>{title}</h2>{hint && <p>{hint}</p>}</div></div>
-    {children}
+  const [open, setOpen] = useState(true);
+  const panelId = `editor-panel-${id}`;
+  return <section className={`editor-section ${open ? 'section-open' : 'section-closed'}`} id={`editor-${id}`}>
+    <div className="section-title-row"><h2><button type="button" className="section-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}><span>{title}</span><span className="section-chevron" aria-hidden="true">⌄</span></button></h2>{hint && <p>{hint}</p>}</div>
+    <div id={panelId} className={`section-collapse ${open ? 'is-open' : 'is-closed'}`} aria-hidden={!open} inert={!open}><div className="section-collapse-inner">{children}</div></div>
   </section>;
 }
 
@@ -250,6 +253,7 @@ export default function Editor({ data, onChange, activeSection, setActiveSection
     ['certifications', tx(lang, 'Certificates', 'الشهادات')], ['languages', tx(lang, 'Languages', 'اللغات')], ['additional', tx(lang, 'More', 'المزيد')],
   ];
   const [photoError, setPhotoError] = useState('');
+  const [basicsOpen, setBasicsOpen] = useState(true);
   const allSkills = [...data.technicalSkills, ...data.softSkills];
   const educationFull = data.education.length >= COLLECTION_LIMITS.education;
   const projectsFull = data.projects.length >= COLLECTION_LIMITS.projects;
@@ -266,16 +270,16 @@ export default function Editor({ data, onChange, activeSection, setActiveSection
 
     <div className="editor-content">
       <SectionManager data={data} onChange={onChange} lang={lang} />
-      <SectionFrame id="personal" title={tx(lang, 'Your essentials', 'بياناتك الأساسية')} hint={tx(lang, 'These details appear at the top of your CV.', 'المعلومات دي هتظهر فوق في سيرتك.') }>
+      <section className={`editor-section ${basicsOpen ? 'section-open' : 'section-closed'}`} id="editor-personal">
+        <button type="button" className="basics-toggle" aria-expanded={basicsOpen} aria-controls="basic-information-panel" onClick={() => setBasicsOpen(open => !open)}><span className="basics-icon" aria-hidden="true">♙</span><span><b>{tx(lang, 'Basic Information — البيانات الأساسية', 'Basic Information — البيانات الأساسية')}</b><small>{tx(lang, 'Your name, role, contact details and photo', 'الاسم والمسمى وبيانات التواصل والصورة')}</small></span><span className="basics-chevron" aria-hidden="true">⌄</span></button>
+        <div id="basic-information-panel" className={`basics-panel section-collapse ${basicsOpen ? 'is-open' : 'is-closed'}`} role="region" aria-label={tx(lang, 'Basic Information', 'البيانات الأساسية')} aria-hidden={!basicsOpen} inert={!basicsOpen}><div className="section-collapse-inner"><p className="basics-hint">{tx(lang, 'These details appear at the top of your CV.', 'المعلومات دي هتظهر فوق في سيرتك.')}</p>
         <div className="form-grid">
           <Field id="full-name" label={tx(lang, 'Full name', 'اسمك بالكامل')} value={data.personal.fullName} onChange={(value) => personalChange('fullName', value)} placeholder={tx(lang, 'e.g. Mohamed Fahim', 'مثال: محمد فهيم')} limit={TEXT_LIMITS.fullName} required lang={lang} />
           <Field id="professional-title" label={tx(lang, 'Professional title', 'المسمّى المهني')} value={data.personal.title} onChange={(value) => personalChange('title', value)} placeholder={tx(lang, 'e.g. Your professional title', 'مثال: المسمّى المهني')} limit={TEXT_LIMITS.professionalTitle} required lang={lang} />
           <Field label={tx(lang, 'Email', 'الإيميل')} value={data.personal.email} onChange={(value) => personalChange('email', value)} type="email" placeholder="name@example.com" lang={lang} />
           <Field label={tx(lang, 'Phone', 'رقم الموبايل')} value={data.personal.phone} onChange={(value) => personalChange('phone', value)} placeholder="+20 ..." lang={lang} />
           <Field label={tx(lang, 'City and country', 'المدينة والدولة')} value={data.personal.location} onChange={(value) => personalChange('location', value)} placeholder={tx(lang, 'e.g. Cairo, Egypt', 'مثال: القاهرة، مصر')} lang={lang} />
-          <Field label="LinkedIn" value={data.personal.linkedin} onChange={(value) => personalChange('linkedin', value)} placeholder="linkedin.com/in/yourname" lang={lang} />
-          <Field label="GitHub" value={data.personal.github} onChange={(value) => personalChange('github', value)} placeholder="github.com/yourname" lang={lang} />
-          <Field label={tx(lang, 'Portfolio / website', 'موقعك أو بورتفوليوك')} value={data.personal.portfolio} onChange={(value) => personalChange('portfolio', value)} placeholder="yourportfolio.com" lang={lang} />
+          {([['linkedin', 'LinkedIn', 'linkedin.com/in/yourname'], ['github', 'GitHub', 'github.com/yourname'], ['portfolio', tx(lang, 'Portfolio / website', 'موقعك أو بورتفوليوك'), 'yourportfolio.com']] as Array<[LinkKey, string, string]>).map(([key, label, placeholder]) => <div className="field field-wide social-link-fields" key={key}><span className="field-label">{label}</span><Field label={tx(lang, 'URL', 'الرابط')} value={data.personal[key] || ''} onChange={(value) => personalChange(key, value)} placeholder={placeholder} lang={lang} />{data.personal[key]?.trim() && !safeExternalUrl(data.personal[key]) && <small className="field-feedback error" role="alert">{tx(lang, 'Enter a valid HTTP or HTTPS address.', 'أدخل رابطًا صحيحًا يبدأ بـ HTTP أو HTTPS.')}</small>}<Field label={tx(lang, 'Display name', 'اسم العرض')} value={data.personal[`${key}DisplayName` as keyof typeof data.personal] as string || ''} onChange={(value) => personalChange(`${key}DisplayName` as keyof PersonalInfo, value)} placeholder={tx(lang, `e.g. ${label} Profile`, `مثال: الملف الشخصي على ${label}`)} lang={lang} /></div>)}
           <div className="photo-upload field-wide">
             <div className="photo-upload-copy"><b>{tx(lang, 'Profile photo (optional)', 'صورتك الشخصية (اختياري)')}</b><span>{tx(lang, 'Only appears in the Profile Photo layout. Some ATS systems do not support photos. Saved on this device and never uploaded.', 'هتظهر في قالب الصورة الشخصية بس. بعض أنظمة ATS مش بتقبل الصور. بنحفظها على جهازك ومش بنرفعها.')}</span></div>
             <div className="photo-upload-actions">
@@ -288,7 +292,9 @@ export default function Editor({ data, onChange, activeSection, setActiveSection
             {photoError && <small className="photo-error" role="alert">{photoError}</small>}
           </div>
         </div>
-      </SectionFrame>
+        </div>
+        </div>
+      </section>
 
       <SectionFrame id="summary" title={tx(lang, 'Professional summary', 'نبذة عنك')} hint={tx(lang, 'In 3–4 lines, connect your experience with the value you bring.', 'في 3 أو 4 سطور، وضّح خبرتك والقيمة اللي بتضيفها.') }>
         <Field label={tx(lang, 'Summary / profile', 'نبذة عنك')} value={data.summary} onChange={(value) => onChange({ ...data, summary: value })} type="textarea" wide limit={TEXT_LIMITS.summary} rows={4} placeholder={tx(lang, 'Write a concise summary of your experience and goals...', 'اكتب نبذة مختصرة عن خبرتك وأهدافك...')} hint={tx(lang, 'Lead with your current role, years of experience, and one measurable outcome.', 'ابدأ بوظيفتك الحالية، وسنين خبرتك، ونتيجة واحدة بالأرقام.') } lang={lang} />
@@ -340,11 +346,10 @@ export default function Editor({ data, onChange, activeSection, setActiveSection
             <Field label={tx(lang, 'Project name', 'اسم المشروع')} value={item.name} onChange={(value) => updateList('projects', index, { name: value })} placeholder={tx(lang, 'e.g. Project name', 'مثال: اسم المشروع')} limit={TEXT_LIMITS.projectName} lang={lang} />
             <Field label={tx(lang, 'Tools / technologies', 'الأدوات أو التقنيات')} value={item.technologies} onChange={(value) => updateList('projects', index, { technologies: value })} placeholder="Figma, React, SQL" limit={TEXT_LIMITS.technologies} lang={lang} />
             <Field label={tx(lang, 'What did you build?', 'إيه اللي عملته؟')} value={item.description} onChange={(value) => updateList('projects', index, { description: value })} type="textarea" wide limit={TEXT_LIMITS.description} rows={3} placeholder={tx(lang, 'Built a planning tool that helps students turn a course syllabus into a weekly plan.', 'طورت أداة تساعد الطلاب على تحويل المنهج لحد خطة أسبوعية.') } lang={lang} />
-            <Field label={tx(lang, 'Project link', 'لينك المشروع')} value={item.link} onChange={(value) => updateList('projects', index, { link: value })} placeholder="yourproject.com" lang={lang} />
-            <Field label="GitHub" value={item.github} onChange={(value) => updateList('projects', index, { github: value })} placeholder="github.com/yourname/project" lang={lang} />
+            {([['link', 'linkDisplayName', tx(lang, 'Project link', 'لينك المشروع'), 'yourproject.com'], ['github', 'githubDisplayName', 'GitHub', 'github.com/yourname/project']] as const).map(([urlKey, labelKey, label, placeholder]) => <div className="form-grid social-link-fields" key={urlKey}><Field label={tx(lang, 'URL', 'الرابط')} value={item[urlKey] || ''} onChange={(value) => updateList('projects', index, { [urlKey]: value })} placeholder={placeholder} lang={lang} />{item[urlKey]?.trim() && !safeExternalUrl(item[urlKey]) && <small className="field-feedback error" role="alert">{tx(lang, 'Enter a valid HTTP or HTTPS address.', 'أدخل رابطًا صحيحًا يبدأ بـ HTTP أو HTTPS.')}</small>}<Field label={tx(lang, 'Display name', 'اسم العرض')} value={item[labelKey] || ''} onChange={(value) => updateList('projects', index, { [labelKey]: value })} placeholder={tx(lang, `e.g. ${label}`, `مثال: ${label}`)} lang={lang} /></div>)}
           </div>
         </div>)}
-        <AddButton onClick={() => add('projects', { id: uid('proj'), name: '', description: '', technologies: '', link: '', github: '' })} disabled={projectsFull}>{tx(lang, 'Add project', 'ضيف مشروع')}</AddButton>
+        <AddButton onClick={() => add('projects', { id: uid('proj'), name: '', description: '', technologies: '', link: '', github: '', linkDisplayName: '', githubDisplayName: '' })} disabled={projectsFull}>{tx(lang, 'Add project', 'ضيف مشروع')}</AddButton>
         {projectsFull && <p className="limit-note">{limitHint(data.projects.length, COLLECTION_LIMITS.projects)}</p>}
       </SectionFrame>
 
