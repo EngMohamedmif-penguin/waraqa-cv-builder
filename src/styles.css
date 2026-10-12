@@ -158,9 +158,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .editor-content { min-width: 0; flex: 1; }
 .editor-section { padding: 25px 21px 27px; border-bottom: 1px solid var(--line); scroll-margin-top: 90px; }
 .editor-section:last-child { border-bottom: 0; }
-.section-title-row { margin: 0 0 17px; }
+.section-title-row { margin: 0 0 12px; }
 .section-title-row h2 { margin: 0; color: var(--espresso); font-size: 17px; line-height: 1.4; letter-spacing: -.02em; }
 .section-title-row p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.section-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 4px 6px; border: 0; border-radius: 7px; color: inherit; background: transparent; text-align: start; transition: background-color 150ms ease, color 150ms ease; }
+.section-toggle:hover { background: #f6f1eb; }
+.section-toggle:focus-visible { outline: 3px solid #c9a98f; outline-offset: 2px; }
+.section-chevron { flex: 0 0 27px; width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: 18px; line-height: 1; transition: transform 190ms ease, background-color 150ms ease; }
+.section-open .section-chevron { transform: rotate(180deg); background: #fff; }
+.section-collapse { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 230ms cubic-bezier(.2,.75,.25,1), opacity 180ms ease; }
+.section-collapse.is-closed { grid-template-rows: 0fr; opacity: 0; }
+.section-collapse-inner { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .section-toggle, .section-chevron, .section-collapse { transition: none !important; } }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 13px; }
 /* الحقول والعدادات ورسائل التحقق أثناء الكتابة. */
 .field { min-width: 0; display: block; }
@@ -1075,3 +1084,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .template-mint .cv-section-skills .cv-skill-group h3,
   .template-mint .cv-section-skills .cv-skill-list { grid-column: 1; grid-row: auto; }
 }
+
+/* تجميع المعلومات الشخصية في لوحة قابلة للطي، مع إبقاء الحقول داخل التدفق نفسه. */
+.basics-toggle { width: 100%; min-height: 62px; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--espresso); background: #faf7f2; text-align: start; }
+.basics-toggle:hover { border-color: #bda58f; background: #f6f0e9; }
+.basics-toggle > span:nth-child(2) { flex: 1; }
+.basics-toggle b, .basics-toggle small { display: block; }
+.basics-toggle b { font-size: 15px; }
+.basics-toggle small { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.basics-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; color: var(--coffee); background: #eee4da; font-size: 21px; }
+.basics-chevron { font-size: 20px; transition: transform 190ms ease; }
+.editor-section.section-open .basics-chevron { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .basics-chevron { transition: none !important; } }
+.basics-panel { padding-top: 3px; }
+.basics-hint { margin: 12px 0; color: var(--muted); font-size: 13px; }
+.social-link-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding: 11px; border: 1px solid #ebe4dc; border-radius: 5px; }
+.social-link-fields > .field-label, .social-link-fields > .field-feedback { grid-column: 1 / -1; margin: 0; }
+.social-link-fields > .field .field-label { font-size: 11px; }
+.cv-contact a, .cv-link-line a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.cv-contact a:hover, .cv-link-line a:hover { color: var(--cv-accent); }
+@media (max-width: 560px) { .social-link-fields { grid-template-columns: 1fr; } }

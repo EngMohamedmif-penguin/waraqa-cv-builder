@@ -2,11 +2,12 @@
  * طبقة الإخراج المحلي: exportPdf يحول صفحات المعاينة وحدها إلى PDF، وexportWord
  * يعيد بناء CVData في فقرات DOCX قابلة للتحرير. لا تعتمد هذه الوحدة على واجهة المحرر.
  */
-import { AlignmentType, BorderStyle, Document, HeadingLevel, ImageRun, Packer, Paragraph, TextRun } from 'docx';
+import { AlignmentType, BorderStyle, Document, ExternalHyperlink, HeadingLevel, ImageRun, Packer, Paragraph, ShadingType, TabStopPosition, TabStopType, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import type { CVColorId, CVData, CVSectionId, TemplateId } from './types';
 import { getTemplatePalette, localizeAdditionalKind, localizeProficiency, templateMeta, type CVPalette } from './data';
+import { getPersonalLinks, linkText, safeEmailHref, safeExternalUrl, safeNavigationHref } from './links';
 
 type Lang = 'en' | 'ar';
 const tx = (lang: Lang, en: string, ar: string) => lang === 'ar' ? ar : en;
@@ -124,6 +125,17 @@ export async function exportPdf(colorTheme: CVColorId = 'blue', template: Templa
       });
       if (index > 0) pdf.addPage('a4', 'portrait');
       pdf.addImage(canvas.toDataURL('image/jpeg', 0.96), 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+      const pageRect = paper.getBoundingClientRect();
+      paper.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((link) => {
+        const href = safeNavigationHref(link.href);
+        if (!href) return;
+        const rect = link.getBoundingClientRect();
+        const x = Math.max(0, (rect.left - pageRect.left) / pageRect.width * 210);
+        const y = Math.max(0, (rect.top - pageRect.top) / pageRect.height * 297);
+        const w = Math.max(1, rect.width / pageRect.width * 210);
+        const h = Math.max(2, rect.height / pageRect.height * 297);
+        pdf.link(x, y, Math.min(w, 210 - x), Math.min(h, 297 - y), { url: href });
+      });
     }
     const name = (papers[0].querySelector('.cv-name-block h1')?.textContent || 'curriculum-vitae').trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'curriculum-vitae';
     pdf.save(`${name}.pdf`);
@@ -137,7 +149,7 @@ type RunOptions = { bold?: boolean; size?: number; color?: string; italics?: boo
 const run = (text: string, options: RunOptions = {}) => new TextRun({ text, font: options.font ?? 'Arial', size: options.size ?? 21, color: options.color ?? '252525', bold: options.bold, italics: options.italics });
 
 function paragraph(text: string, lang: Lang, options: { size?: number; bold?: boolean; before?: number; after?: number; alignment?: typeof AlignmentType[keyof typeof AlignmentType]; color?: string; font?: string; heading?: boolean; borderLeft?: boolean; borderTop?: boolean; borderColor?: string; borderLeftColor?: string } = {}) {
-  const rtl = lang === 'ar';
+  const rtl = lang === 'ar' && /[\u0600-\u06ff]/u.test(text);
   const alignment = options.alignment ?? (rtl ? AlignmentType.RIGHT : AlignmentType.LEFT);
   const borderLine = { style: BorderStyle.SINGLE, color: options.borderColor ?? 'BEBEBE', size: 4, space: 3 };
   const borders: Record<string, typeof borderLine> = {};
@@ -150,21 +162,24 @@ function paragraph(text: string, lang: Lang, options: { size?: number; bold?: bo
     alignment,
     bidirectional: rtl,
     spacing: { before: options.before ?? 0, after: options.after ?? 90, line: 276 },
+    keepNext: Boolean(options.heading), keepLines: true,
     ...(Object.keys(borders).length ? { border: borders } : {}),
   } as ConstructorParameters<typeof Paragraph>[0]);
 }
 
-function richParagraph(runs: TextRun[], lang: Lang, after = 45) {
-  return new Paragraph({ children: runs, alignment: lang === 'ar' ? AlignmentType.RIGHT : AlignmentType.LEFT, bidirectional: lang === 'ar', spacing: { after, line: 276 } } as ConstructorParameters<typeof Paragraph>[0]);
+function richParagraph(runs: TextRun[], lang: Lang, after = 45, content = '') {
+  const rtl = lang === 'ar' && /[\u0600-\u06ff]/u.test(content);
+  return new Paragraph({ children: runs, alignment: rtl ? AlignmentType.RIGHT : AlignmentType.LEFT, bidirectional: rtl, tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }], spacing: { after, line: 276 } } as ConstructorParameters<typeof Paragraph>[0]);
 }
 
 function bullet(text: string, lang: Lang) {
+  const rtl = lang === 'ar' && /[\u0600-\u06ff]/u.test(text);
   return new Paragraph({
     children: [run(text)],
     bullet: { level: 0 },
-    alignment: lang === 'ar' ? AlignmentType.RIGHT : AlignmentType.LEFT,
-    bidirectional: lang === 'ar',
-    indent: { left: 360, hanging: 180 },
+    alignment: rtl ? AlignmentType.RIGHT : AlignmentType.LEFT,
+    bidirectional: rtl,
+    indent: rtl ? { right: 360, hanging: 180 } : { left: 360, hanging: 180 },
     spacing: { after: 38, line: 270 },
   } as ConstructorParameters<typeof Paragraph>[0]);
 }
@@ -172,7 +187,7 @@ function bullet(text: string, lang: Lang) {
 /** ينشئ DOCX قابلًا للتحرير من نفس البيانات والترتيب المستخدمين في المعاينة. */
 export async function exportWord(data: CVData, template: TemplateId, lang: Lang = 'en', colorTheme: CVColorId = 'blue') {
   const { personal } = data;
-  let children: Paragraph[] = [];
+  let children: Array<Paragraph | Table> = [];
   const rtl = lang === 'ar';
   const palette = getTemplatePalette(template, colorTheme);
   const alignment = rtl ? AlignmentType.RIGHT : AlignmentType.LEFT;
@@ -180,7 +195,8 @@ export async function exportWord(data: CVData, template: TemplateId, lang: Lang 
   const modern = template === 'modern';
   const executive = template === 'executive';
   const mint = template === 'mint';
-  const contacts = [personal.email, personal.phone, personal.location, personal.linkedin, personal.portfolio, personal.github].filter(Boolean);
+  const socialLinks = getPersonalLinks(personal);
+  const contacts = [personal.email, personal.phone, personal.location].filter(Boolean);
 
   if (template === 'photo' && personal.photo) {
     const encoded = personal.photo.split(',')[1] || '';
@@ -193,7 +209,15 @@ export async function exportWord(data: CVData, template: TemplateId, lang: Lang 
   }
   if (personal.fullName) children.push(paragraph(personal.fullName, lang, { size: modern || executive ? 46 : 40, bold: true, before: modern ? 120 : executive ? 80 : 0, after: 28, color: modern ? palette.heading.slice(1) : '171717', borderTop: modern, alignment: modern ? AlignmentType.CENTER : undefined, font: modern ? 'Aptos Display' : undefined }));
   if (personal.title) children.push(paragraph(personal.title, lang, { size: 25, after: compact ? 45 : 65, color: palette.accent.slice(1), alignment: modern ? AlignmentType.CENTER : undefined, font: modern ? 'Aptos' : undefined }));
-  if (contacts.length) children.push(paragraph(contacts.join('  ·  '), lang, { size: 18, after: compact ? 95 : 130, color: '555555', alignment: modern ? AlignmentType.CENTER : undefined, font: modern ? 'Aptos' : undefined }));
+  if (contacts.length || socialLinks.length) {
+    const contactChildren: Array<TextRun | ExternalHyperlink> = [];
+    const addContact = (label: string, href?: string) => { if (contactChildren.length) contactChildren.push(run('  ·  ', { size: 18, color: '777777' })); contactChildren.push(href ? new ExternalHyperlink({ link: href, children: [new TextRun({ text: label, font: 'Arial', size: 18, color: '315C85', underline: { color: '315C85' } })] }) : run(label, { size: 18, color: '555555' })); };
+    contacts.forEach((contact) => addContact(contact, contact === personal.email ? safeEmailHref(contact) || undefined : undefined));
+    socialLinks.forEach((link) => addContact(linkText(link.url, link.displayName, link.key === 'portfolio' ? tx(lang, 'Personal website', 'الموقع الشخصي') : link.label), safeExternalUrl(link.url) || undefined));
+    const contactText = [...contacts, ...socialLinks.map((link) => linkText(link.url, link.displayName, link.key === 'portfolio' ? tx(lang, 'Personal website', 'الموقع الشخصي') : link.label))].join(' ');
+    const contactRtl = lang === 'ar' && /[\u0600-\u06ff]/u.test(contactText);
+    children.push(new Paragraph({ children: contactChildren, alignment: modern ? AlignmentType.CENTER : contactRtl ? AlignmentType.RIGHT : AlignmentType.LEFT, bidirectional: contactRtl, spacing: { after: compact ? 95 : 130, line: 276 }, keepLines: true } as ConstructorParameters<typeof Paragraph>[0]));
+  }
 
   const section = (title: string) => children.push(paragraph(title, lang, { size: executive ? 25 : mint ? 23 : 23, bold: true, before: compact ? 95 : executive ? 155 : mint ? 145 : 130, after: compact ? 48 : executive ? 75 : mint ? 72 : 70, color: palette.heading.slice(1), heading: true, alignment: modern ? AlignmentType.CENTER : undefined, borderColor: palette.divider.slice(1) }));
   const detailLine = (title: string, detail: string, date: string) => {
@@ -201,10 +225,10 @@ export async function exportWord(data: CVData, template: TemplateId, lang: Lang 
     if (title) runs.push(run(title, { bold: true, size: 21, color: palette.accent.slice(1) }));
     if (detail) runs.push(run(`${title ? '  ·  ' : ''}${detail}`, { size: 20, color: '626262' }));
     if (date) runs.push(run(`\t${date}`, { size: 19, color: '64748B' }));
-    if (runs.length) children.push(richParagraph(runs, lang, compact ? 25 : 36));
+    if (runs.length) children.push(richParagraph(runs, lang, compact ? 25 : 36, [title, detail, date].join(' ')));
   };
 
-  const blocks: Record<string, Paragraph[]> = {};
+  const blocks: Record<string, Array<Paragraph | Table>> = {};
   const renderBlock = (id: string, render: () => void) => { const previous = children; children = []; render(); blocks[id] = children; children = previous; };
   renderBlock('summary', () => { if (data.summary.trim()) { section(tx(lang, 'PROFESSIONAL SUMMARY', 'نبذة عنك')); children.push(paragraph(data.summary, lang, { size: 21, after: compact ? 50 : 70 })); } });
   renderBlock('experience', () => { if (data.experiences.length) { section(tx(lang, 'WORK EXPERIENCE', 'الخبرة العملية')); data.experiences.forEach((item) => {
@@ -219,17 +243,32 @@ export async function exportWord(data: CVData, template: TemplateId, lang: Lang 
     if (item.description.trim()) children.push(paragraph(item.description, lang, { size: 20, after: 55 }));
   }); } });
   renderBlock('skills', () => { if (data.technicalSkills.length || data.softSkills.length) { section(tx(lang, 'SKILLS', 'المهارات'));
-    const skillGroup = (title: string, skills: string[]) => {
-      if (!skills.length) return;
-      children.push(paragraph(title, lang, { size: 20, bold: true, before: 35, after: 28, color: palette.heading.slice(1) }));
-      skills.filter((skill) => skill.trim()).forEach((skill) => children.push(bullet(skill.trim(), lang)));
-    };
-    skillGroup(tx(lang, 'Technical Skills', 'المهارات التقنية'), data.technicalSkills);
-    skillGroup(tx(lang, 'Professional Skills', 'المهارات المهنية'), data.softSkills);
+    const groups = [
+      { title: tx(lang, 'Technical skills', 'المهارات التقنية'), skills: data.technicalSkills },
+      { title: tx(lang, 'Professional skills', 'المهارات المهنية'), skills: data.softSkills },
+    ];
+    const skillCell = (group: typeof groups[number]) => new TableCell({
+      width: { size: 5053, type: WidthType.DXA },
+      shading: { type: ShadingType.CLEAR, fill: 'F6F3EF', color: 'auto' },
+      margins: { top: 105, bottom: 105, left: 130, right: 130 },
+      borders: { top: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, bottom: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, left: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, right: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) } },
+      children: group.skills.length ? [paragraph(group.title, lang, { size: 19, bold: true, after: 35, color: palette.heading.slice(1) }), paragraph(group.skills.map((skill) => skill.trim()).filter(Boolean).join('   ·   '), lang, { size: 19, after: 0 })] : [paragraph(group.title, lang, { size: 19, bold: true, after: 0, color: palette.heading.slice(1) })],
+    });
+    children.push(new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE }, columnWidths: [5053, 5053], visuallyRightToLeft: rtl,
+      borders: { top: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, bottom: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, left: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, right: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) }, insideVertical: { style: BorderStyle.SINGLE, size: 4, color: palette.divider.slice(1) } },
+      rows: [new TableRow({ cantSplit: true, children: groups.map(skillCell) })],
+    }));
   } });
   renderBlock('projects', () => { if (data.projects.length) { section(tx(lang, 'PROJECTS', 'المشروعات')); data.projects.forEach((item) => {
     detailLine(item.name, '', ''); if (item.technologies) children.push(paragraph(item.technologies, lang, { size: 18, after: 45, color: '555555' })); if (item.description.trim()) children.push(paragraph(item.description, lang, { size: 20, after: 45 }));
-    const links = [item.link, item.github].filter(Boolean).join(' · '); if (links) children.push(paragraph(links, lang, { size: 18, after: 55, color: '555555' }));
+    const projectLinks: Array<TextRun | ExternalHyperlink> = [];
+    ([{ url: item.link, label: linkText(item.link || '', item.linkDisplayName || '', tx(lang, 'Project link', 'رابط المشروع')) }, { url: item.github, label: linkText(item.github || '', item.githubDisplayName || '', 'GitHub') }]).filter((entry) => entry.url?.trim()).forEach((entry) => {
+      if (projectLinks.length) projectLinks.push(run('  ·  ', { size: 18, color: '777777' }));
+      const href = safeExternalUrl(entry.url || '');
+      projectLinks.push(href ? new ExternalHyperlink({ link: href, children: [new TextRun({ text: entry.label, font: 'Arial', size: 18, color: '315C85', underline: { color: '315C85' } })] }) : run(entry.label, { size: 18, color: '555555' }));
+    });
+    if (projectLinks.length) children.push(new Paragraph({ children: projectLinks, alignment, bidirectional: rtl, spacing: { after: 55, line: 276 }, keepLines: true } as ConstructorParameters<typeof Paragraph>[0]));
   }); } });
   renderBlock('certifications', () => { if (data.certifications.length) { section(tx(lang, 'CERTIFICATIONS', 'الشهادات')); data.certifications.forEach((item) => children.push(paragraph([item.name, item.organization, item.date, item.credential].filter(Boolean).join('  ·  '), lang, { size: 20, after: 55 }))); } });
   renderBlock('languages', () => { if (data.languages.length) { section(tx(lang, 'LANGUAGES', 'اللغات')); children.push(paragraph(data.languages.map((item) => `${item.language}${item.level ? ` — ${localizeProficiency(item.level, lang)}` : ''}`).join('  ·  '), lang, { size: 20, after: 55 })); } });
@@ -243,14 +282,15 @@ export async function exportWord(data: CVData, template: TemplateId, lang: Lang 
   const hidden = new Set(data.hiddenSections || []);
   sectionIds.forEach((id) => { if (!hidden.has(id)) children.push(...(blocks[id] || [])); });
   const doc = new Document({
+    evenAndOddHeaderAndFooters: false,
     creator: '',
     title: rtl ? 'السيرة الذاتية' : 'Curriculum Vitae',
     description: '',
     sections: [{
-      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 960, right: 1000, bottom: 960, left: 1000 } } },
+      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 850, right: 900, bottom: 850, left: 900 } } },
       children: children.length ? children : [paragraph(tx(lang, 'Add your name and professional title to begin.', 'ضيف اسمك ومسمّاك المهني عشان تبدأ.'), lang, { alignment })],
     }],
-    styles: { default: { document: { run: { font: 'Arial', size: 21, color: '252525' }, paragraph: { spacing: { line: 276 } } } } },
+    styles: { default: { document: { run: { font: 'Arial', size: 21, color: '252525' }, paragraph: { spacing: { line: 276, after: 60 } } } } },
     features: { updateFields: false },
     compatibility: { doNotExpandShiftReturn: true },
   });
